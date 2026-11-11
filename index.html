@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Under-Chest Pushup Counter</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #container {
+            text-align: center;
+            width: 100%;
+            max-width: 400px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        h1 {
+            font-size: 5rem;
+            margin: 10px 0;
+            color: #00ff88;
+            font-weight: 800;
+        }
+        #state-indicator {
+            font-size: 1.5rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 20px;
+            color: #aaaaaa;
+            padding: 8px 16px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+        .state-up { background-color: #222; color: #00ff88 !important; }
+        .state-down { background-color: #ff3366; color: #fff !important; }
+        
+        #video-container {
+            position: relative;
+            width: 160px;
+            height: 120px;
+            margin: 0 auto 20px auto;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid #333;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror view */
+        }
+        #btn-start {
+            background-color: #00ff88;
+            color: #121212;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 255, 136, 0.3);
+        }
+        #debug {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="container">
+        <div id="state-indicator" class="state-up">Positioning App...</div>
+        <p style="color: #888; margin: 0;">Reps Completed</p>
+        <h1 id="counter">0</h1>
+        
+        <div id="video-container">
+            <video id="webcam" autoplay playsinline muted></video>
+        </div>
+
+        <button id="btn-start" onclick="initCamera()">Start Camera</button>
+        <div id="debug">Fill Metric: 0%</div>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const counterEl = document.getElementById('counter');
+        const stateEl = document.getElementById('state-indicator');
+        const debugEl = document.getElementById('debug');
+        const btnStart = document.getElementById('btn-start');
+
+        let repCount = 0;
+        let isDown = false;
+        let previousFrameData = null;
+        let animationFrameId = null;
+
+        // Configuration Thresholds
+        const THRESHOLD_DOWN = 0.35; // 35% or more frame alteration indicates chest proximity
+        const THRESHOLD_UP = 0.15;   // Dropping back down below 15% counts as a pushup exit
+
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "user", width: 160, height: 120 },
+                    audio: false
+                });
+                video.srcObject = stream;
+                btnStart.style.display = 'none';
+                stateEl.textContent = "READY - START PUSHUPS";
+                
+                // Initialize processing canvas
+                const canvas = document.createElement('canvas');
+                canvas.width = 40; // Low-res calculation for blazing performance on mobile
+                canvas.height = 30;
+                const ctx = canvas.getContext('2d');
+
+                video.addEventListener('play', () => {
+                    function process() {
+                        if (video.paused || video.ended) return;
+                        
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        
+                        if (previousFrameData) {
+                            let changedPixels = 0;
+                            const totalPixels = currentFrame.data.length / 4;
+
+                            // Loop through pixels to detect shift in visual data (proximity blocking light/shapes)
+                            for (let i = 0; i < currentFrame.data.length; i += 4) {
+                                let rDiff = Math.abs(currentFrame.data[i] - previousFrameData.data[i]);
+                                let gDiff = Math.abs(currentFrame.data[i+1] - previousFrameData.data[i+1]);
+                                let bDiff = Math.abs(currentFrame.data[i+2] - previousFrameData.data[i+2]);
+                                
+                                // Significant change threshold per pixel
+                                if ((rDiff + gDiff + bDiff) / 3 > 30) {
+                                    changedPixels++;
+                                }
+                            }
+
+                            const changeRatio = changedPixels / totalPixels;
+                            debugEl.textContent = `Fill Metric: ${Math.round(changeRatio * 100)}%`;
+
+                            // State Tracking Engine
+                            if (changeRatio > THRESHOLD_DOWN && !isDown) {
+                                isDown = true;
+                                stateEl.textContent = "DOWN";
+                                stateEl.className = "state-down";
+                                // Optional: make phone vibrate slightly when hitting the bottom target
+                                if (navigator.vibrate) navigator.vibrate(50); 
+                            } else if (changeRatio < THRESHOLD_UP && isDown) {
+                                isDown = false;
+                                repCount++;
+                                counterEl.textContent = repCount;
+                                stateEl.textContent = "UP";
+                                stateEl.className = "state-up";
+                                if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                            }
+                        }
+
+                        previousFrameData = currentFrame;
+                        animationFrameId = requestAnimationFrame(process);
+                    }
+                    process();
+                });
+
+            } catch (err) {
+                alert("Camera access denied or unavailable: " + err.message);
+            }
+        }
+    </script>
+</body>
+</html>
